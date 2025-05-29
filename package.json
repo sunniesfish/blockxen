@@ -1,0 +1,39 @@
+{
+  "name": "blockxen",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "jest",
+    "lint": "",
+    "lint:fix": "",
+    "docker:up": "docker-compose up -d --build",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f app"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sunniesfish/blockxen.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/sunniesfish/blockxen/issues"
+  },
+  "homepage": "https://github.com/sunniesfish/blockxen#readme",
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.15.24",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.3.4",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "mysql2": "^3.14.1",
+    "puppeteer-cluster": "^0.24.0"
+  }
+}

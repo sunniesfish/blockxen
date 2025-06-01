@@ -1,65 +1,118 @@
 import { Page } from "puppeteer";
-import { BaseExtractionStrategy, IExtractionStrategy } from "./base.strategy";
-import { SearchData } from "@/interfaces";
+import { BaseExtractionStrategy } from "./base.strategy";
+import { IExtractionStrategy, SearchData, strategyHint } from "@/interfaces";
+import { normalizeDomain } from "@/common/utils";
 
 /**
- * Google 검색 결과 페이지에서 실제 검색 결과 링크들을 추출하는 전략입니다.
+ * 구글검색 결과 페이지에서 실제 검색 결과 링크들을 추출
  */
 export class GoogleSearchResultStrategy
   extends BaseExtractionStrategy
   implements IExtractionStrategy
 {
+  private readonly keywords: string[];
+
+  constructor(keywords: string[]) {
+    super();
+    this.keywords = keywords;
+  }
+
   public async extract(page: Page, url: string): Promise<SearchData[]> {
-    // Google 검색 결과 페이지의 DOM 구조는 매우 특정적이며, 자주 변경될 수 있습니다.
-    // 여기서는 예시로 일반적인 선택자를 사용합니다.
-    // 실제로는 더 견고한 선택자나 분석 방법이 필요합니다.
-    const extractedLinks = await page.evaluate(() => {
-      const links: string[] = [];
-      // Google 검색 결과 링크는 보통 특정 클래스나 구조를 가집니다.
-      // 예: 'a h3' (제목을 감싸는 a 태그), 또는 특정 div 내부의 a 태그
-      // document.querySelectorAll('div.g a[href]').forEach(el => {
-      // document.querySelectorAll('a[jsname][href]').forEach(el => {
-      // document.querySelectorAll('div[data-ved] a[href]').forEach(el => {
-      document.querySelectorAll('a[href^="/url?q="]').forEach((el) => {
-        const href = (el as HTMLAnchorElement).href;
-        if (href) {
-          // Google의 리디렉션 URL (/url?q=) 에서 실제 URL 추출 시도
-          try {
-            const urlParams = new URLSearchParams(new URL(href).search);
-            const actualUrl = urlParams.get("q");
-            if (
-              actualUrl &&
-              !actualUrl.startsWith("http://webcache.googleusercontent.com")
-            ) {
-              links.push(actualUrl);
-            }
-          } catch (e) {
-            // 일반 링크일 수도 있음, 또는 잘못된 URL 형식
-            // console.warn('Could not parse Google redirect URL:', href);
+    try {
+      return await this.extractGoogleSearchResults(page);
+    } catch (error) {
+      console.error("Google Search Result Strategy Error:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Google 검색 결과에서 적절한 링크만 추출
+   */
+  private async extractGoogleSearchResults(page: Page): Promise<SearchData[]> {
+    const strategyHint = this.getStrategyHint(page.url());
+    return await page.evaluate(() => {
+      const results: SearchData[] = [];
+
+      const allLinks = document.querySelectorAll("a");
+
+      allLinks.forEach((link) => {
+        let shouldSkip = true;
+        try {
+          const titleElement = link.querySelector("h3");
+          if (!titleElement || !link.href) {
+            return;
           }
+
+          const href = link.href;
+          const title = titleElement.textContent?.trim() || "";
+          if (this.keywords.some((keyword) => title.includes(keyword))) {
+            shouldSkip = false;
+          }
+          if (
+            href.includes("google.") ||
+            href.startsWith("/search") ||
+            href.startsWith("#")
+          ) {
+            return;
+          }
+
+          let currentElement: Element | null = link;
+          let depth = 0;
+          while (
+            currentElement &&
+            currentElement !== document.body &&
+            depth < 8
+          ) {
+            const highlightElement =
+              currentElement.querySelector("em, b") ||
+              currentElement.parentElement?.querySelector("em, b");
+
+            if (highlightElement) {
+              const textContainer = highlightElement.parentElement;
+              if (textContainer) {
+                const descText = textContainer.textContent?.trim() || "";
+                if (
+                  this.keywords.some((keyword) => descText.includes(keyword))
+                ) {
+                  shouldSkip = false;
+                  break;
+                }
+              }
+            }
+            currentElement = currentElement.parentElement;
+            depth++;
+          }
+
+          if (shouldSkip) {
+            return;
+          }
+
+          // 6. 객체로 만들어 배열에 넣음
+          results.push({
+            link: href,
+            strategyHint: strategyHint,
+          });
+        } catch (error) {
+          console.error("링크 처리 중 오류:", error);
         }
       });
-      // 일반적인 링크도 추가 (예: 관련 검색어, 뉴스 등)
-      // document.querySelectorAll('a[href]').forEach(el => links.push((el as HTMLAnchorElement).href));
-      return links;
+
+      return results;
     });
+  }
 
-    const extractedText = await page.evaluate(() => {
-      // 검색 결과 페이지의 텍스트를 가져올 수 있으나, 양이 많을 수 있음
-      // return document.body.innerText || '';
-      // 각 검색 결과의 제목이나 스니펫을 모아서 반환하는 것이 더 유용할 수 있음
-      const texts: string[] = [];
-      document.querySelectorAll("h3").forEach((h3) => texts.push(h3.innerText));
-      return texts;
-    });
-
-    const htmlContent = await page.content();
-
-    return [
-      {
-        link: url,
-        strategyHint: "search-result-page",
-      },
-    ];
+  getStrategyHint(urlString: string): strategyHint {
+    const domain = normalizeDomain(urlString);
+    if (domain.includes("x.com")) {
+      return "sns-x";
+    }
+    if (domain.includes("youtube.com")) {
+      return "sns-youtube";
+    }
+    if (domain.includes("/board/") || domain.includes("/bbs/")) {
+      return "community-site";
+    }
+    return "unknown";
   }
 }

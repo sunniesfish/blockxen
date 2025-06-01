@@ -1,6 +1,7 @@
 import { DataSource, Repository } from "typeorm";
-import { TargetSiteEntity, SiteType } from "../entities/target-site.entity";
+import { TargetSiteEntity } from "../entities/target-site.entity";
 import { typeOrmConfig } from "@/config"; // AppDataSource 직접 사용 대신 config에서 가져오기
+import { SiteType } from "@/interfaces";
 
 export class StorageService {
   private targetSiteRepository!: Repository<TargetSiteEntity>;

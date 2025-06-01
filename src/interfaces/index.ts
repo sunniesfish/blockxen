@@ -1,6 +1,7 @@
 // Global interfaces can be defined here
 
 import { TargetSiteEntity } from "@/database/entities/target-site.entity";
+import { Page } from "puppeteer";
 
 export interface PageData {
   extractedData: {
@@ -59,4 +60,20 @@ export enum SiteType {
   DISCORD_LINK = "DISCORD_LINK",
   COMMUNITY = "COMMUNITY",
   UNKNOWN = "UNKNOWN",
+}
+
+/**
+ * 데이터 추출 전략 인터페이스
+ */
+export interface IExtractionStrategy {
+  /**
+   * Page 객체에서 데이터를 추출
+   * @param page Puppeteer의 Page 객체
+   * @param currentUrl 현재 페이지의 URL (리다이렉션 등으로 page.url()과 다를 수 있음)
+   * @returns 추출된 데이터를 담은 PageData 객체 또는 null (추출 실패/부적합 시)
+   */
+  extract(
+    page: Page,
+    currentUrl: string
+  ): Promise<PageData | SearchData[] | null>;
 }

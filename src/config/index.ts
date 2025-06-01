@@ -31,6 +31,11 @@ export const config = {
     searchDelayMs: parseInt(process.env.CRAWLER_SEARCH_DELAY_MS || "1000", 10),
     pageDelayMs: parseInt(process.env.CRAWLER_PAGE_DELAY_MS || "500", 10),
   },
+  strategy: {
+    searchKeywords: (
+      process.env.STRATEGY_SEARCH_KEYWORDS || "프리섭,첫충,홍보채널"
+    ).split(","),
+  },
   isDevelopment: process.env.NODE_ENV === "development",
 };
 

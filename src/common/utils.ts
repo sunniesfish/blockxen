@@ -1,19 +1,4 @@
-import { strategyHint } from "@/interfaces";
 import { URL } from "url"; // Node.js 내장 모듈
-
-export function getStrategyHint(urlString: string): strategyHint {
-  const domain = normalizeDomain(urlString);
-  if (domain.includes("x.com")) {
-    return "sns-x";
-  }
-  if (domain.includes("youtube.com")) {
-    return "sns-youtube";
-  }
-  if (domain.includes("/board/") || domain.includes("/bbs/")) {
-    return "community-site";
-  }
-  return "unknown";
-}
 
 /**
  * URL 정규화

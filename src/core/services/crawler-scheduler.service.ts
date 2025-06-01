@@ -11,11 +11,7 @@ import {
   SiteType,
   ProcessedData,
 } from "@/interfaces";
-import {
-  normalizeDomain,
-  getBaseDomain,
-  getStrategyHint,
-} from "@/common/utils";
+import { normalizeDomain, getBaseDomain } from "@/common/utils";
 
 export class CrawlerSchedulerService {
   private Q1_communityDomains: Queue<string>;
@@ -181,11 +177,9 @@ export class CrawlerSchedulerService {
       const dataToExplore = this.S1_searchResultData.dequeue();
       if (!dataToExplore || !this.isCrawling) return;
 
-      const strategyHint = getStrategyHint(dataToExplore.strategyHint);
-
       const pageTask: CrawlTask = {
         targetUrl: dataToExplore.link,
-        strategyHint: strategyHint,
+        strategyHint: dataToExplore.strategyHint,
       };
       const exploredPageData: PageData | SearchData[] | null | undefined =
         await this.puppeteerManager.queueTask(pageTask);
@@ -202,7 +196,6 @@ export class CrawlerSchedulerService {
   /**
    * S1에서 꺼낸 페이지 데이터를 처리
    *
-   * 체크포인트 : 각각의 수집 데이터 parsing이 적절한지 확인 필요
    */
   private async processExploredData(
     pageData: PageData,
@@ -270,7 +263,7 @@ export class CrawlerSchedulerService {
   /**
    * 새로운 키워드 조합에 대해 재 크롤링 진행 여부 결정
    *
-   * 체크포인트 : 한 커뮤니티에 대한 재귀탐색 횟수 제한 추가 필요
+   * 수정필요사항 : 한 커뮤니티에 대한 재귀탐색 횟수 제한 추가 필요
    */
   private async checkAndPrepareForRestart(): Promise<boolean> {
     let newKeywordCombinationsFound = false;

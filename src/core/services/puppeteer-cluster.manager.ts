@@ -5,7 +5,6 @@ import { CrawlTask, PageData, SearchData } from "@/interfaces";
 import { StrategyManager } from "./strategy.manager";
 import { IExtractionStrategy } from "@/strategies/base.strategy";
 
-// TaskFunction에 전달될 데이터 타입 정의
 type ClusterTaskData = CrawlTask;
 
 export class PuppeteerClusterManager {
@@ -59,7 +58,7 @@ export class PuppeteerClusterManager {
    * tasck 종류 (search, direct)에 따라 적절한 strategy 적용하여 크롤링 작업 수행
    * @param page
    * @param task
-   * @returns Promise<PageData | null>
+   * @returns Promise<PageData | SearchData[] | null>
    */
   private async handlePage(
     page: Page,
@@ -95,7 +94,7 @@ export class PuppeteerClusterManager {
       }
 
       let strategy: IExtractionStrategy | null =
-        this.strategyManager.getStrategy(task);
+        this.strategyManager.getStrategy(task.strategyHint);
 
       return await strategy.extract(page, currentUrlAfterNavigation);
     } catch (error: any) {
@@ -120,12 +119,5 @@ export class PuppeteerClusterManager {
       await this.cluster.close();
       this.cluster = null;
     }
-  }
-
-  public getClusterInstance(): Cluster<
-    ClusterTaskData,
-    PageData | SearchData[] | null
-  > | null {
-    return this.cluster;
   }
 }

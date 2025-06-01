@@ -15,6 +15,7 @@ import { normalizeDomain, getBaseDomain } from "@/common/utils";
 
 export class CrawlerSchedulerService {
   private Q1_communityDomains: Queue<string>;
+  private Q1_communityDomainsSet: Set<string>;
   private K1_keywords: Set<string>;
   private R1_domainKeywordMap: Map<string, Set<string>>;
   private R2_discoveredTargetDomains: Set<string>;
@@ -40,6 +41,7 @@ export class CrawlerSchedulerService {
     this.dataProcessor = dataProcessor;
 
     this.Q1_communityDomains = new Queue<string>();
+    this.Q1_communityDomainsSet = new Set<string>();
     this.K1_keywords = new Set<string>();
     this.R1_domainKeywordMap = new Map<string, Set<string>>();
     this.R2_discoveredTargetDomains = new Set<string>();
@@ -102,6 +104,7 @@ export class CrawlerSchedulerService {
           s1Processed = true;
         }
 
+        // 확인 필요 : 여기서 isCrawling을 false로 하는 것이 맞는가?
         if (!q1Processed && !s1Processed) {
           if (await this.checkAndPrepareForRestart()) {
           } else {
@@ -129,11 +132,10 @@ export class CrawlerSchedulerService {
   private async processQ1_communityDomains(): Promise<void> {
     const domainToCrawl = this.Q1_communityDomains.dequeue();
     if (!domainToCrawl) return;
+    if (!this.R1_domainKeywordMap.has(domainToCrawl)) {
+      this.R1_domainKeywordMap.set(domainToCrawl, new Set<string>());
+    }
 
-    this.R1_domainKeywordMap.set(
-      domainToCrawl,
-      this.R1_domainKeywordMap.get(domainToCrawl) || new Set<string>()
-    );
     const appliedKeywordsToDomain =
       this.R1_domainKeywordMap.get(domainToCrawl)!;
 
@@ -207,12 +209,7 @@ export class CrawlerSchedulerService {
     // 수집한 새 커뮤니티 도메인 큐 처리
     processedResult.newCommunityDomains.forEach((domain: string) => {
       const normDomain = normalizeDomain(domain.trim());
-      if (
-        normDomain &&
-        !this.R1_domainKeywordMap.has(normDomain) &&
-        // toArray가 무겁지 않을까? queue.ts 수정 필요할 수도
-        !this.Q1_communityDomains.toArray().includes(normDomain)
-      ) {
+      if (normDomain && !this.R1_domainKeywordMap.has(normDomain)) {
         this.Q1_communityDomains.enqueue(normDomain);
       }
     });
@@ -261,6 +258,7 @@ export class CrawlerSchedulerService {
   }
 
   /**
+   *  체크 필요
    * 새로운 키워드 조합에 대해 재 크롤링 진행 여부 결정
    *
    * 수정필요사항 : 한 커뮤니티에 대한 재귀탐색 횟수 제한 추가 필요

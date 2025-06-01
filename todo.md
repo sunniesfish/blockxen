@@ -23,6 +23,7 @@
             this.Q1_communityDomains.toArray().includes(normDomain)로직 경량화,
         },
         checkAndPrepareForRestart() : {
+            **** 현재 동작이 맞는가? : 얘가 지금 isCrawling을 설정할 수 있는데 이러면 안되지 않나??
             **한 커뮤니티에 대한 재귀탐색 횟수 제한 추가 필요,
             O(n) 개선 필요
         }

@@ -1,40 +1,64 @@
-/**
- * 간단한 제네릭 Queue 클래스
- */
 export class Queue<T> {
-  private items: T[] = [];
+  private readonly inArray: T[] = [];
+  private readonly outArray: T[] = [];
 
   enqueue(item: T): void {
-    this.items.push(item);
+    this.inArray.push(item);
   }
 
-  dequeue(): T | undefined {
-    if (this.isEmpty()) {
-      return undefined;
+  dequeue(): T {
+    if (this.length === 0) throw new Error("Queue is empty");
+
+    if (this.outArray.length === 0) {
+      while (this.inArray.length > 0) {
+        this.outArray.push(this.inArray.pop()!);
+      }
     }
-    return this.items.shift();
+    return this.outArray.pop()!;
   }
 
-  peek(): T | undefined {
-    if (this.isEmpty()) {
-      return undefined;
+  peek(): T {
+    if (this.length === 0) throw new Error("Queue is empty");
+
+    if (this.outArray.length === 0) {
+      return this.inArray[0];
     }
-    return this.items[0];
+
+    return this.outArray[this.outArray.length - 1];
   }
 
   isEmpty(): boolean {
-    return this.items.length === 0;
+    return this.length === 0;
   }
 
   size(): number {
-    return this.items.length;
-  }
-
-  toArray(): T[] {
-    return [...this.items];
+    return this.length;
   }
 
   clear(): void {
-    this.items = [];
+    this.inArray.length = 0;
+    this.outArray.length = 0;
   }
-} 
+
+  toArray(): T[] {
+    const totalLength = this.length;
+    if (totalLength === 0) return [];
+
+    const result: T[] = new Array(totalLength);
+    let index = 0;
+
+    for (let i = this.outArray.length - 1; i >= 0; i--) {
+      result[index++] = this.outArray[i];
+    }
+
+    for (let i = 0; i < this.inArray.length; i++) {
+      result[index++] = this.inArray[i];
+    }
+
+    return result;
+  }
+
+  get length(): number {
+    return this.inArray.length + this.outArray.length;
+  }
+}

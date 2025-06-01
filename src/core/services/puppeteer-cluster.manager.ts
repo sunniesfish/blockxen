@@ -1,7 +1,7 @@
 import { Cluster } from "puppeteer-cluster";
 import { Page, Browser } from "puppeteer";
 import { config } from "@/config";
-import { CrawlTask, PageData } from "@/interfaces";
+import { CrawlTask, PageData, SearchData } from "@/interfaces";
 import { StrategyManager } from "./strategy.manager";
 import { IExtractionStrategy } from "@/strategies/base.strategy";
 
@@ -9,7 +9,10 @@ import { IExtractionStrategy } from "@/strategies/base.strategy";
 type ClusterTaskData = CrawlTask;
 
 export class PuppeteerClusterManager {
-  private cluster: Cluster<ClusterTaskData, PageData | null> | null = null;
+  private cluster: Cluster<
+    ClusterTaskData,
+    PageData | SearchData[] | null
+  > | null = null;
   private strategyManager: StrategyManager;
 
   constructor(strategyManager: StrategyManager) {
@@ -61,15 +64,15 @@ export class PuppeteerClusterManager {
   private async handlePage(
     page: Page,
     task: ClusterTaskData
-  ): Promise<PageData | null> {
+  ): Promise<PageData | SearchData[] | null> {
     try {
       await page.setUserAgent(config.puppeteer.userAgent);
       await page.setViewport({ width: 1280, height: 800 });
 
       let currentUrlAfterNavigation: string;
 
+      // 검색 작업
       if (task.domainToSearch && task.keywordToSearch) {
-        // 검색 엔진 (예: Google)을 통한 검색 작업
         const searchQuery = `site:${task.domainToSearch} "${task.keywordToSearch}"`;
         const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
         await page.goto(googleUrl, {
@@ -77,8 +80,9 @@ export class PuppeteerClusterManager {
           timeout: config.puppeteer.timeoutMs,
         });
         currentUrlAfterNavigation = page.url();
+
+        // 직접 URL 방문 작업
       } else if (task.targetUrl) {
-        // 직접 URL 방문
         await page.goto(task.targetUrl, {
           waitUntil: "domcontentloaded",
           timeout: config.puppeteer.timeoutMs,
@@ -91,7 +95,7 @@ export class PuppeteerClusterManager {
       }
 
       let strategy: IExtractionStrategy | null =
-        this.strategyManager.getStrategy(currentUrlAfterNavigation, task);
+        this.strategyManager.getStrategy(task);
 
       return await strategy.extract(page, currentUrlAfterNavigation);
     } catch (error: any) {
@@ -102,7 +106,7 @@ export class PuppeteerClusterManager {
 
   public async queueTask(
     task: CrawlTask
-  ): Promise<PageData | null | undefined> {
+  ): Promise<PageData | SearchData[] | null | undefined> {
     if (!this.cluster) {
       console.error("Cluster not initialized. Call initialize() first.");
       return undefined;
@@ -120,7 +124,7 @@ export class PuppeteerClusterManager {
 
   public getClusterInstance(): Cluster<
     ClusterTaskData,
-    PageData | null
+    PageData | SearchData[] | null
   > | null {
     return this.cluster;
   }

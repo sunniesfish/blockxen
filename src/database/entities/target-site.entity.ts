@@ -7,14 +7,7 @@ import {
   Index,
 } from "typeorm";
 
-export enum SiteType {
-  ILLEGAL_PRIVATE_SERVER = "ILLEGAL_PRIVATE_SERVER",
-  GAMBLING = "GAMBLING",
-  AD_BANNER_HOST = "AD_BANNER_HOST",
-  OPEN_CHAT_LINK = "OPEN_CHAT_LINK",
-  COMMUNITY = "COMMUNITY", // 새로운 도메인이 커뮤니티 사이트일 경우
-  UNKNOWN = "UNKNOWN",
-}
+import { SiteType } from "@/interfaces";
 
 @Entity({ name: "target_sites" })
 export class TargetSiteEntity {

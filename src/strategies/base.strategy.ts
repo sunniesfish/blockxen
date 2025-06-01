@@ -1,5 +1,5 @@
 import { Page } from "puppeteer";
-import { PageData } from "@/interfaces";
+import { PageData, SearchData } from "@/interfaces";
 
 /**
  * 데이터 추출 전략 인터페이스
@@ -11,14 +11,10 @@ export interface IExtractionStrategy {
    * @param currentUrl 현재 페이지의 URL (리다이렉션 등으로 page.url()과 다를 수 있음)
    * @returns 추출된 데이터를 담은 PageData 객체 또는 null (추출 실패/부적합 시)
    */
-  extract(page: Page, currentUrl: string): Promise<PageData | null>;
-
-  /**
-   * 이 전략이 특정 URL에 적용 가능한지 판단
-   * @param url 확인할 URL
-   * @returns 적용 가능하면 true, 아니면 false
-   */
-  isApplicable(url: string): boolean;
+  extract(
+    page: Page,
+    currentUrl: string
+  ): Promise<PageData | SearchData[] | null>;
 }
 
 /**
@@ -28,14 +24,7 @@ export abstract class BaseExtractionStrategy implements IExtractionStrategy {
   public abstract extract(
     page: Page,
     currentUrl: string
-  ): Promise<PageData | null>;
-
-  // 기본적으로 모든 URL에 적용 가능하도록 설정하거나, 하위 클래스에서 재정의
-  public isApplicable(url: string): boolean {
-    // 정규식 또는 특정 도메인 패턴으로 제한 가능
-    console.log(`BaseExtractionStrategy.isApplicable called for: ${url}`); // 디버깅용
-    return true;
-  }
+  ): Promise<PageData | SearchData[] | null>;
 
   /**
    * 페이지에서 모든 <a> 태그의 href 속성을 추출합니다.

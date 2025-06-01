@@ -1,6 +1,6 @@
 import { Page } from "puppeteer";
 import { BaseExtractionStrategy, IExtractionStrategy } from "./base.strategy";
-import { PageData } from "@/interfaces";
+import { SearchData } from "@/interfaces";
 
 /**
  * Google 검색 결과 페이지에서 실제 검색 결과 링크들을 추출하는 전략입니다.
@@ -9,7 +9,7 @@ export class GoogleSearchResultStrategy
   extends BaseExtractionStrategy
   implements IExtractionStrategy
 {
-  public async extract(page: Page, url: string): Promise<PageData> {
+  public async extract(page: Page, url: string): Promise<SearchData[]> {
     // Google 검색 결과 페이지의 DOM 구조는 매우 특정적이며, 자주 변경될 수 있습니다.
     // 여기서는 예시로 일반적인 선택자를 사용합니다.
     // 실제로는 더 견고한 선택자나 분석 방법이 필요합니다.
@@ -55,12 +55,11 @@ export class GoogleSearchResultStrategy
 
     const htmlContent = await page.content();
 
-    return {
-      url,
-      extractedLinks: [...new Set(extractedLinks)], // 중복 제거
-      extractedText,
-      htmlContent,
-      strategyUsed: "GoogleSearchResultStrategy",
-    };
+    return [
+      {
+        link: url,
+        strategyHint: "search-result-page",
+      },
+    ];
   }
 }

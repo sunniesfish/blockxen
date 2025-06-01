@@ -2,20 +2,27 @@ import { Queue } from "./utils/queue";
 import { config } from "@/config";
 import { StorageService } from "@/database/services/storage.service";
 import { PuppeteerClusterManager } from "./puppeteer-cluster.manager";
-import { DataProcessorService, ProcessedData } from "./data-processor.service";
-import { CrawlTask, PageData } from "@/interfaces";
-import { normalizeDomain, getBaseDomain } from "@/common/utils";
+import { DataProcessorService } from "./data-processor.service";
 import {
-  TargetSiteEntity,
+  CrawlTask,
+  PageData,
+  SearchData,
+  strategyHint,
   SiteType,
-} from "@/database/entities/target-site.entity";
+  ProcessedData,
+} from "@/interfaces";
+import {
+  normalizeDomain,
+  getBaseDomain,
+  getStrategyHint,
+} from "@/common/utils";
 
 export class CrawlerSchedulerService {
   private Q1_communityDomains: Queue<string>;
   private K1_keywords: Set<string>;
   private R1_domainKeywordMap: Map<string, Set<string>>;
   private R2_discoveredTargetDomains: Set<string>;
-  private S1_searchResultLinks: Queue<string>;
+  private S1_searchResultData: Queue<SearchData>;
 
   private readonly storageService: StorageService;
   private readonly puppeteerManager: PuppeteerClusterManager;
@@ -40,7 +47,7 @@ export class CrawlerSchedulerService {
     this.K1_keywords = new Set<string>();
     this.R1_domainKeywordMap = new Map<string, Set<string>>();
     this.R2_discoveredTargetDomains = new Set<string>();
-    this.S1_searchResultLinks = new Queue<string>();
+    this.S1_searchResultData = new Queue<SearchData>();
   }
 
   private async initializeDataStructures(): Promise<void> {
@@ -94,7 +101,7 @@ export class CrawlerSchedulerService {
         }
 
         let s1Processed = false;
-        if (!this.S1_searchResultLinks.isEmpty()) {
+        if (!this.S1_searchResultData.isEmpty()) {
           await this.processS1_searchResultLinks();
           s1Processed = true;
         }
@@ -144,18 +151,23 @@ export class CrawlerSchedulerService {
         strategyHint: "search-result-page",
       };
 
-      const searchPageData: PageData | null | undefined =
-        await this.puppeteerManager.queueTask(searchTask);
+      const searchPageData = await this.puppeteerManager.queueTask(searchTask);
       appliedKeywordsToDomain.add(keyword);
 
-      if (searchPageData && searchPageData.extractedLinks) {
-        searchPageData.extractedLinks.forEach((link: string) => {
-          if (link && getBaseDomain(link) === domainToCrawl) {
-            this.S1_searchResultLinks.enqueue(link);
-          }
-        });
+      if (searchPageData) {
+        if (Array.isArray(searchPageData)) {
+          searchPageData.forEach(
+            (data: { link: string; strategyHint: strategyHint }) => {
+              if (data.link && getBaseDomain(data.link) === domainToCrawl) {
+                this.S1_searchResultData.enqueue(data);
+              }
+            }
+          );
+        } else {
+          continue;
+        }
+        if (this.searchDelayMs > 0) await this.delay(this.searchDelayMs);
       }
-      if (this.searchDelayMs > 0) await this.delay(this.searchDelayMs);
     }
   }
 
@@ -165,27 +177,30 @@ export class CrawlerSchedulerService {
    *
    */
   private async processS1_searchResultLinks(): Promise<void> {
-    while (!this.S1_searchResultLinks.isEmpty()) {
-      const urlToExplore = this.S1_searchResultLinks.dequeue();
-      if (!urlToExplore || !this.isCrawling) return;
+    while (!this.S1_searchResultData.isEmpty()) {
+      const dataToExplore = this.S1_searchResultData.dequeue();
+      if (!dataToExplore || !this.isCrawling) return;
 
-      // urlToExplore의 형태를 체크하는 로직 필요 -> strategyHint 결정
+      const strategyHint = getStrategyHint(dataToExplore.strategyHint);
+
       const pageTask: CrawlTask = {
-        targetUrl: urlToExplore,
-        strategyHint: "community-site",
+        targetUrl: dataToExplore.link,
+        strategyHint: strategyHint,
       };
-      const exploredPageData: PageData | null | undefined =
+      const exploredPageData: PageData | SearchData[] | null | undefined =
         await this.puppeteerManager.queueTask(pageTask);
 
-      if (exploredPageData) {
-        await this.processExploredData(exploredPageData, urlToExplore);
+      if (exploredPageData && !Array.isArray(exploredPageData)) {
+        await this.processExploredData(exploredPageData, dataToExplore.link);
+      } else {
+        continue;
       }
       if (this.pageDelayMs > 0) await this.delay(this.pageDelayMs);
     }
   }
 
   /**
-   * 탐색된 페이지 데이터를 처리
+   * S1에서 꺼낸 페이지 데이터를 처리
    *
    * 체크포인트 : 각각의 수집 데이터 parsing이 적절한지 확인 필요
    */
@@ -229,29 +244,21 @@ export class CrawlerSchedulerService {
           sourceUrl: siteDataFromProcessor.sourceUrl ?? undefined,
         };
 
-        try {
-          const savedSite = await this.storageService.saveTargetSite(dataForDb);
-          if (savedSite) {
-            this.R2_discoveredTargetDomains.add(normDomain);
+        void this.storageService.saveTargetSite(dataForDb);
 
-            if (dataForDb.siteName && dataForDb.siteName !== normDomain) {
-              this.K1_keywords.add(dataForDb.siteName.trim());
-            }
-            const domainPartForKeyword = normDomain.split(".")[0];
-            if (domainPartForKeyword)
-              this.K1_keywords.add(domainPartForKeyword);
+        if (dataForDb) {
+          this.R2_discoveredTargetDomains.add(normDomain);
+
+          if (dataForDb.siteName && dataForDb.siteName !== normDomain) {
+            this.K1_keywords.add(dataForDb.siteName.trim());
           }
-        } catch (dbError) {
-          console.error(
-            `    => [NEW TARGET] Error saving to DB ${dataForDb.url}:`,
-            dbError
-          );
+          const domainPartForKeyword = normDomain.split(".")[0];
+          if (domainPartForKeyword) this.K1_keywords.add(domainPartForKeyword);
         }
       }
     }
 
     // 수집한 새 키워드 처리
-    const initialK1Size = this.K1_keywords.size;
     processedResult.newKeywords.forEach((keyword: string) => {
       const trimmedKeyword = keyword.trim();
       if (trimmedKeyword && trimmedKeyword.length > 1) {

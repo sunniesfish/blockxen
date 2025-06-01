@@ -37,15 +37,6 @@ export class CommunitySiteStrategy extends BaseExtractionStrategy {
     };
   }
 
-  public override isApplicable(url: string): boolean {
-    const domain = normalizeDomain(url);
-    const applicable = this.targetCommunityDomains.includes(domain);
-    console.log(
-      `CommunitySiteStrategy.isApplicable for ${url} (domain: ${domain}): ${applicable}`
-    );
-    return applicable;
-  }
-
   // 커뮤니티 사이트별로 다른 DOM 구조를 가질 수 있으므로,
   // 게시글 목록 선택자, 내용 선택자 등을 파라미터화 하거나
   // 하위 전략 클래스를 만들 수 있음

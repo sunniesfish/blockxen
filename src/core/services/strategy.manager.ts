@@ -1,10 +1,12 @@
-import {
-  IExtractionStrategy,
-  BaseExtractionStrategy,
-} from "@/strategies/base.strategy";
+import { BaseExtractionStrategy } from "@/strategies/base.strategy";
 import { CommunitySiteStrategy } from "@/strategies/community-site.strategy";
 import { Page } from "puppeteer";
-import { PageData, CrawlTask, strategyHint } from "@/interfaces";
+import {
+  PageData,
+  CrawlTask,
+  strategyHint,
+  IExtractionStrategy,
+} from "@/interfaces";
 import { GoogleSearchResultStrategy } from "@/strategies/google-search-result.strategy";
 import { config } from "@/config";
 export class StrategyManager {

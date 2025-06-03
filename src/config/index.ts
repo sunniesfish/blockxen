@@ -27,6 +27,10 @@ export const config = {
     initialSeedKeywords: (
       process.env.INITIAL_SEED_KEYWORDS || "프리섭,첫충,홍보채널"
     ).split(","),
+    domainDiscoveryLimit: parseInt(
+      process.env.CRAWLER_DOMAIN_DISCOVERY_LIMIT || "100",
+      10
+    ),
     maxCrawlCycles: parseInt(process.env.CRAWLER_MAX_CYCLES || "1000", 10),
     searchDelayMs: parseInt(process.env.CRAWLER_SEARCH_DELAY_MS || "1000", 10),
     pageDelayMs: parseInt(process.env.CRAWLER_PAGE_DELAY_MS || "500", 10),

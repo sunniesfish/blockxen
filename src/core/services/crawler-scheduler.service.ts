@@ -13,9 +13,15 @@ import {
 } from "@/interfaces";
 import { normalizeDomain, getBaseDomain } from "@/common/utils";
 
+interface DomainMetadata {
+  retryCount: number;
+  keywordCount: number;
+}
+
 export class CrawlerSchedulerService {
   private Q1_communityDomains: Queue<string>;
   private Q1_communityDomainsSet: Set<string>;
+  private Q1_metadata: Map<string, DomainMetadata>;
   private K1_keywords: Set<string>;
   private R1_domainKeywordMap: Map<string, Set<string>>;
   private R2_discoveredTargetDomains: Set<string>;
@@ -42,6 +48,7 @@ export class CrawlerSchedulerService {
 
     this.Q1_communityDomains = new Queue<string>();
     this.Q1_communityDomainsSet = new Set<string>();
+    this.Q1_metadata = new Map<string, DomainMetadata>();
     this.K1_keywords = new Set<string>();
     this.R1_domainKeywordMap = new Map<string, Set<string>>();
     this.R2_discoveredTargetDomains = new Set<string>();
@@ -52,6 +59,7 @@ export class CrawlerSchedulerService {
     config.crawler.initialSeedDomains.forEach((domain: string) => {
       if (domain && domain.trim() !== "") {
         this.Q1_communityDomains.enqueue(normalizeDomain(domain.trim()));
+        this.Q1_communityDomainsSet.add(normalizeDomain(domain.trim()));
       }
     });
     config.crawler.initialSeedKeywords.forEach((keyword: string) => {
@@ -92,23 +100,17 @@ export class CrawlerSchedulerService {
       while (this.isCrawling && this.currentCrawlCycle < this.maxCrawlCycles) {
         this.currentCrawlCycle++;
 
-        let q1Processed = false;
         if (!this.Q1_communityDomains.isEmpty()) {
           await this.processQ1_communityDomains();
-          q1Processed = true;
         }
 
-        let s1Processed = false;
         if (!this.S1_searchResultData.isEmpty()) {
           await this.processS1_searchResultLinks();
-          s1Processed = true;
         }
 
-        // 확인 필요 : 여기서 isCrawling을 false로 하는 것이 맞는가?
-        if (!q1Processed && !s1Processed) {
+        if (this.Q1_communityDomains.isEmpty()) {
           if (await this.checkAndPrepareForRestart()) {
-          } else {
-            this.isCrawling = false;
+            this.isCrawling = true;
           }
         }
 
@@ -132,8 +134,22 @@ export class CrawlerSchedulerService {
   private async processQ1_communityDomains(): Promise<void> {
     const domainToCrawl = this.Q1_communityDomains.dequeue();
     if (!domainToCrawl) return;
+
+    if (this.Q1_communityDomainsSet.has(domainToCrawl)) {
+      this.Q1_communityDomainsSet.delete(domainToCrawl);
+    } else {
+      return;
+    }
+
     if (!this.R1_domainKeywordMap.has(domainToCrawl)) {
       this.R1_domainKeywordMap.set(domainToCrawl, new Set<string>());
+    }
+
+    if (!this.Q1_metadata.has(domainToCrawl)) {
+      this.Q1_metadata.set(domainToCrawl, {
+        retryCount: 0,
+        keywordCount: this.K1_keywords.size,
+      });
     }
 
     const appliedKeywordsToDomain =
@@ -150,9 +166,9 @@ export class CrawlerSchedulerService {
       };
 
       const searchPageData = await this.puppeteerManager.queueTask(searchTask);
-      appliedKeywordsToDomain.add(keyword);
 
       if (searchPageData) {
+        appliedKeywordsToDomain.add(keyword);
         if (Array.isArray(searchPageData)) {
           searchPageData.forEach(
             (data: { link: string; strategyHint: strategyHint }) => {
@@ -177,7 +193,8 @@ export class CrawlerSchedulerService {
   private async processS1_searchResultLinks(): Promise<void> {
     while (!this.S1_searchResultData.isEmpty()) {
       const dataToExplore = this.S1_searchResultData.dequeue();
-      if (!dataToExplore || !this.isCrawling) return;
+      if (!this.isCrawling) return;
+      if (!dataToExplore) continue;
 
       const pageTask: CrawlTask = {
         targetUrl: dataToExplore.link,
@@ -209,7 +226,12 @@ export class CrawlerSchedulerService {
     // 수집한 새 커뮤니티 도메인 큐 처리
     processedResult.newCommunityDomains.forEach((domain: string) => {
       const normDomain = normalizeDomain(domain.trim());
-      if (normDomain && !this.R1_domainKeywordMap.has(normDomain)) {
+      if (
+        normDomain &&
+        !this.R1_domainKeywordMap.has(normDomain) &&
+        !this.Q1_communityDomainsSet.has(normDomain)
+      ) {
+        this.Q1_communityDomainsSet.add(normDomain);
         this.Q1_communityDomains.enqueue(normDomain);
       }
     });
@@ -262,25 +284,46 @@ export class CrawlerSchedulerService {
    * 새로운 키워드 조합에 대해 재 크롤링 진행 여부 결정
    *
    * 수정필요사항 : 한 커뮤니티에 대한 재귀탐색 횟수 제한 추가 필요
+   *
    */
   private async checkAndPrepareForRestart(): Promise<boolean> {
-    let newKeywordCombinationsFound = false;
+    let shouldRestart = false;
     for (const domain of this.R1_domainKeywordMap.keys()) {
       if (!this.isCrawling) break;
-      const appliedKeywords = this.R1_domainKeywordMap.get(domain)!;
-      const k1Array = Array.from(this.K1_keywords);
-      const newKeywordsForThisDomain = k1Array.filter(
-        (k) => !appliedKeywords.has(k)
-      );
 
-      if (newKeywordsForThisDomain.length > 0) {
-        if (!this.Q1_communityDomains.toArray().includes(domain)) {
-          this.Q1_communityDomains.enqueue(domain);
-          newKeywordCombinationsFound = true;
+      const metadata = this.Q1_metadata.get(domain);
+      if (!metadata) continue;
+
+      if (
+        metadata.retryCount <= 3 &&
+        metadata.keywordCount <= config.crawler.domainDiscoveryLimit
+      ) {
+        // 해당 도메인에 대해 이미 적용한 키워드 조합 집합 가져옴
+        const appliedKeywords = this.R1_domainKeywordMap.get(domain)!;
+
+        // 모든 키워드 조합 배열로 변환
+        const k1Array = Array.from(this.K1_keywords);
+
+        // 이미 적용한 키워드 조합 제외한 새로운 키워드 조합 배열 생성
+        const newKeywordsForThisDomain = k1Array.filter(
+          (k) => !appliedKeywords.has(k)
+        );
+        // 새로운 키워드 조합이 있는 경우
+        if (newKeywordsForThisDomain.length > 0) {
+          // 해당 도메인이 커뮤니티 도메인 큐에 없는 경우
+          if (!this.Q1_communityDomainsSet.has(domain)) {
+            // 메타데이터 업데이트 후 커뮤니티 도메인 큐에 추가
+            shouldRestart = true;
+            metadata.retryCount++;
+            metadata.keywordCount =
+              metadata.keywordCount + newKeywordsForThisDomain.length;
+            this.Q1_communityDomains.enqueue(domain);
+            this.Q1_communityDomainsSet.add(domain);
+          }
         }
       }
     }
-    return newKeywordCombinationsFound;
+    return shouldRestart;
   }
 
   public stopCrawling(): void {

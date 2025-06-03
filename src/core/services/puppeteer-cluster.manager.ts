@@ -1,9 +1,13 @@
 import { Cluster } from "puppeteer-cluster";
 import { Page, Browser } from "puppeteer";
 import { config } from "@/config";
-import { CrawlTask, PageData, SearchData } from "@/interfaces";
+import {
+  CrawlTask,
+  IExtractionStrategy,
+  PageData,
+  SearchData,
+} from "@/interfaces";
 import { StrategyManager } from "./strategy.manager";
-import { IExtractionStrategy } from "@/strategies/base.strategy";
 
 type ClusterTaskData = CrawlTask;
 

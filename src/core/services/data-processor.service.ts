@@ -1,40 +1,20 @@
-import { PageData, ProcessedData, SiteType } from "@/interfaces";
+import { LinkType, PageData, ProcessedData, SiteType } from "@/interfaces";
 import { TargetSiteEntity } from "@/database/entities/target-site.entity";
-import { normalizeDomain } from "@/common/utils";
 import { StorageService } from "@/database/services/storage.service";
+import { config } from "@/config";
+import { normalizeDomain } from "@/common/utils";
 
 // 로직 완성 필요
 export class DataProcessorService {
   private readonly storageService: StorageService;
-  private readonly openChatPattern = /open\.kakao\.com\/o\/[a-zA-Z0-9]+/gi;
-  private readonly gamblingKeywords = [
-    "카지노",
-    "바카라",
-    "토토",
-    "스포츠베팅",
-    "슬롯",
-  ];
-  private readonly privateServerKeywords = [
-    "프리서버",
-    "리니지프리",
-    "메이플프리",
-    "서버오픈",
-  ];
-  private readonly adServerIndicators = [
-    "ad.",
-    "ads.",
-    "advert",
-    "adserver",
-    "adsystem",
-  ];
-  private readonly knownAdServerDomains = [
-    "doubleclick.net",
-    "googleadservices.com",
-    "taboola.com",
-  ];
+  private readonly ILLEGAL_FREE_SERVER_KEYWORDS: string[];
+  private readonly GAMBLING_KEYWORDS: string[];
 
   constructor(storageService: StorageService) {
     this.storageService = storageService;
+    this.ILLEGAL_FREE_SERVER_KEYWORDS =
+      config.crawler.illegalFreeServerIndicator.split(",");
+    this.GAMBLING_KEYWORDS = config.crawler.gamblingIndicator.split(",");
   }
 
   /**
@@ -54,30 +34,61 @@ export class DataProcessorService {
     > = new Map();
     const newKeywords: Set<string> = new Set();
 
-    for (const linkData of pageData.extractedData) {
-      const siteName = this.extractSiteName(linkData.url, linkData.description);
-      const keywords = this.extractKeywords(linkData.description);
-      const siteType = this.extractSiteType(siteName, keywords);
-      if (linkData.url) {
-        const normalizedDomain = normalizeDomain(linkData.url);
-        const targetSite: Omit<
-          TargetSiteEntity,
-          "id" | "discoveredAt" | "lastCrawledAt"
-        > = {
-          url: linkData.url,
-          normalizedDomain: normalizedDomain,
-          siteName: siteName,
-          siteType: siteType,
-        };
-
-        if (siteType === SiteType.COMMUNITY) {
-          newCommunityDomains.add(normalizedDomain);
-        } else {
-          newTargetSites.set(normalizedDomain, targetSite);
+    for (const data of pageData.extractedData) {
+      if (data.url) {
+        const keywords = this.extractKeywords(data.description);
+        const siteType = this.extractSiteType(data.title ?? "", keywords);
+        keywords.forEach((keyword) => newKeywords.add(keyword));
+        switch (data.linkType) {
+          case LinkType.COMMUNITY_SITE: {
+            const normalizedDomain = normalizeDomain(data.url);
+            newCommunityDomains.add(normalizedDomain);
+            break;
+          }
+          case LinkType.OPEN_CHAT_LINK: {
+            !newTargetSites.has(data.url) &&
+              newTargetSites.set(data.url, {
+                url: data.url,
+                linkType: LinkType.OPEN_CHAT_LINK,
+                siteType: siteType,
+                sourceUrl: sourceUrl,
+                normalizedDomain: data.url,
+                siteName: data.title,
+              });
+            break;
+          }
+          case LinkType.DISCORD_LINK: {
+            !newTargetSites.has(data.url) &&
+              newTargetSites.set(data.url, {
+                url: data.url,
+                linkType: LinkType.DISCORD_LINK,
+                siteType: siteType,
+                sourceUrl: sourceUrl,
+                normalizedDomain: data.url,
+                siteName: data.title,
+              });
+            break;
+          }
+          case LinkType.WEBSITE: {
+            const normalizedDomain = normalizeDomain(data.url);
+            !newTargetSites.has(data.url) &&
+              newTargetSites.set(data.url, {
+                url: data.url,
+                linkType: LinkType.WEBSITE,
+                siteType: siteType,
+                sourceUrl: sourceUrl,
+                normalizedDomain: normalizedDomain,
+                siteName: data.title,
+              });
+            break;
+          }
+          default:
+            break;
         }
-      }
-      for (const keyword of keywords) {
-        newKeywords.add(keyword);
+      } else if (data.description) {
+        this.extractKeywords(data.description).forEach((keyword) =>
+          newKeywords.add(keyword)
+        );
       }
     }
 
@@ -88,22 +99,38 @@ export class DataProcessorService {
     };
   }
 
-  private extractSiteName(
-    link: string | undefined,
-    textContent: string | undefined
-  ): string | undefined {
-    return undefined;
+  private extractKeywords(text: string): string[] {
+    return text
+      .split(" ")
+      .filter((word) => word.length >= 2)
+      .map((word) => word.toLowerCase());
   }
 
-  private extractKeywords(text: string | undefined): string[] {
-    if (!text) return [];
-    return text.split(" ").filter((word) => word.length > 2);
-  }
+  private extractSiteType(siteName: string, keywords: string[]): SiteType {
+    const lowerSiteName = siteName.toLowerCase();
 
-  private extractSiteType(
-    siteName: string | undefined,
-    keywords: string[]
-  ): SiteType {
+    if (
+      this.GAMBLING_KEYWORDS.some((keyword) =>
+        lowerSiteName.includes(keyword)
+      ) ||
+      keywords.some((keyword) =>
+        this.GAMBLING_KEYWORDS.includes(keyword.toLowerCase())
+      )
+    ) {
+      return SiteType.GAMBLING;
+    }
+
+    if (
+      this.ILLEGAL_FREE_SERVER_KEYWORDS.some((keyword) =>
+        lowerSiteName.includes(keyword)
+      ) ||
+      keywords.some((keyword) =>
+        this.ILLEGAL_FREE_SERVER_KEYWORDS.includes(keyword.toLowerCase())
+      )
+    ) {
+      return SiteType.ILLEGAL_FREE_SERVER;
+    }
+
     return SiteType.UNKNOWN;
   }
 }

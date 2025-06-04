@@ -6,8 +6,17 @@ import { Page } from "puppeteer";
 export interface PageData {
   extractedData: {
     url?: string;
-    description?: string;
+    description: string;
+    title?: string;
+    linkType?: LinkType;
   }[];
+}
+
+export enum LinkType {
+  OPEN_CHAT_LINK = "open_chat_link",
+  DISCORD_LINK = "discord_link",
+  WEBSITE = "website",
+  COMMUNITY_SITE = "communitySite",
 }
 
 export interface SearchData {
@@ -56,9 +65,6 @@ export interface ProcessedData {
 export enum SiteType {
   ILLEGAL_FREE_SERVER = "ILLEGAL_FREE_SERVER",
   GAMBLING = "GAMBLING",
-  OPEN_CHAT_LINK = "OPEN_CHAT_LINK",
-  DISCORD_LINK = "DISCORD_LINK",
-  COMMUNITY = "COMMUNITY",
   UNKNOWN = "UNKNOWN",
 }
 
@@ -76,4 +82,9 @@ export interface IExtractionStrategy {
     page: Page,
     currentUrl: string
   ): Promise<PageData | SearchData[] | null>;
+}
+
+export interface DomainMetadata {
+  retryCount: number;
+  keywordCount: number;
 }

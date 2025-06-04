@@ -27,79 +27,84 @@ export class GoogleSearchResultStrategy
   }
 
   /**
-   * Google 검색 결과에서 적절한 링크만 추출
+   * Google 검색 결과에서 적절한 데이터만 추출
    */
   private async extractGoogleSearchResults(page: Page): Promise<SearchData[]> {
     const strategyHint = this.getStrategyHint(page.url());
-    return await page.evaluate(() => {
-      const results: SearchData[] = [];
+    const keywords = this.keywords;
 
-      const allLinks = document.querySelectorAll("a");
+    return await page.evaluate(
+      (keywords: string[], strategyHint: strategyHint) => {
+        const results: { link: string; strategyHint: strategyHint }[] = [];
 
-      allLinks.forEach((link) => {
-        let shouldSkip = true;
-        try {
-          const titleElement = link.querySelector("h3");
-          if (!titleElement || !link.href) {
-            return;
-          }
+        const allLinks = document.querySelectorAll("a");
 
-          const href = link.href;
-          const title = titleElement.textContent?.trim() || "";
-          if (this.keywords.some((keyword) => title.includes(keyword))) {
-            shouldSkip = false;
-          }
-          if (
-            href.includes("google.") ||
-            href.startsWith("/search") ||
-            href.startsWith("#")
-          ) {
-            return;
-          }
+        allLinks.forEach((link) => {
+          let shouldSkip = true;
+          try {
+            const titleElement = link.querySelector("h3");
+            if (!titleElement || !link.href) {
+              return;
+            }
 
-          let currentElement: Element | null = link;
-          let depth = 0;
-          while (
-            currentElement &&
-            currentElement !== document.body &&
-            depth < 8
-          ) {
-            const highlightElement =
-              currentElement.querySelector("em, b") ||
-              currentElement.parentElement?.querySelector("em, b");
+            const href = link.href;
+            const title = titleElement.textContent?.trim() || "";
 
-            if (highlightElement) {
-              const textContainer = highlightElement.parentElement;
-              if (textContainer) {
-                const descText = textContainer.textContent?.trim() || "";
-                if (
-                  this.keywords.some((keyword) => descText.includes(keyword))
-                ) {
-                  shouldSkip = false;
-                  break;
+            if (keywords.some((keyword) => title.includes(keyword))) {
+              shouldSkip = false;
+            }
+
+            if (
+              href.includes("google.") ||
+              href.startsWith("/search") ||
+              href.startsWith("#")
+            ) {
+              return;
+            }
+
+            let currentElement: Element | null = link;
+            let depth = 0;
+            while (
+              currentElement &&
+              currentElement !== document.body &&
+              depth < 8
+            ) {
+              const highlightElement =
+                currentElement.querySelector("em, b") ||
+                currentElement.parentElement?.querySelector("em, b");
+
+              if (highlightElement) {
+                const textContainer = highlightElement.parentElement;
+                if (textContainer) {
+                  const descText = textContainer.textContent?.trim() || "";
+                  if (keywords.some((keyword) => descText.includes(keyword))) {
+                    shouldSkip = false;
+                    break;
+                  }
                 }
               }
+              currentElement = currentElement.parentElement;
+              depth++;
             }
-            currentElement = currentElement.parentElement;
-            depth++;
+
+            if (shouldSkip) {
+              return;
+            }
+
+            results.push({
+              link: href,
+              strategyHint: strategyHint,
+            });
+          } catch (error) {
+            console.error("링크 처리 중 오류:", error);
           }
+        });
 
-          if (shouldSkip) {
-            return;
-          }
-
-          // 6. 객체로 만들어 배열에 넣음
-          results.push({
-            link: href,
-            strategyHint: strategyHint,
-          });
-        } catch (error) {
-          console.error("링크 처리 중 오류:", error);
-        }
-      });
-
-      return results;
-    });
+        return results;
+      },
+      keywords,
+      strategyHint
+    );
   }
 
   getStrategyHint(urlString: string): strategyHint {

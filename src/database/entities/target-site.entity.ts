@@ -7,7 +7,7 @@ import {
   Index,
 } from "typeorm";
 
-import { SiteType } from "@/interfaces";
+import { SiteType, LinkType } from "@/interfaces";
 
 @Entity({ name: "target_sites" })
 export class TargetSiteEntity {
@@ -18,6 +18,7 @@ export class TargetSiteEntity {
   @Column({ type: "varchar", length: 2048 })
   url!: string;
 
+  // 오픈챗 링크 또는 디스코드 링크인 경우 url과 동일
   @Index()
   @Column({ type: "varchar", length: 255, name: "normalized_domain" })
   normalizedDomain!: string;
@@ -32,6 +33,15 @@ export class TargetSiteEntity {
     name: "site_type",
   })
   siteType!: SiteType;
+
+  @Column({
+    type: "enum",
+    enum: LinkType,
+    default: LinkType.WEBSITE,
+    name: "link_type",
+    nullable: false,
+  })
+  linkType!: LinkType;
 
   @Column({ type: "varchar", length: 2048, name: "source_url", nullable: true })
   sourceUrl?: string | null;

@@ -9,6 +9,11 @@ import {
 } from "@/interfaces";
 import { GoogleSearchResultStrategy } from "@/strategies/google-search-result.strategy";
 import { config } from "@/config";
+
+/**
+ * 전략 관리
+ * 크롤링 작업에 적합한 전략을 관리하고 제공
+ */
 export class StrategyManager {
   private strategyMap: Map<strategyHint, IExtractionStrategy>;
 

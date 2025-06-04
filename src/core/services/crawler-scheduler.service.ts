@@ -10,18 +10,19 @@ import {
   strategyHint,
   SiteType,
   ProcessedData,
+  DomainMetadata,
 } from "@/interfaces";
-import { normalizeDomain, getBaseDomain } from "@/common/utils";
+import { normalizeDomain } from "@/common/utils";
+import AsyncLock from "./utils/async-lock";
 
-interface DomainMetadata {
-  retryCount: number;
-  keywordCount: number;
-}
-
+/**
+ * 크롤링 스케줄러 서비스
+ * 크롤링 작업을 조정하고 관리
+ */
 export class CrawlerSchedulerService {
   private Q1_communityDomains: Queue<string>;
   private Q1_communityDomainsSet: Set<string>;
-  private Q1_metadata: Map<string, DomainMetadata>;
+  private Q1_communityDomainsMetadata: Map<string, DomainMetadata>;
   private K1_keywords: Set<string>;
   private R1_domainKeywordMap: Map<string, Set<string>>;
   private R2_discoveredTargetDomains: Set<string>;
@@ -31,11 +32,13 @@ export class CrawlerSchedulerService {
   private readonly puppeteerManager: PuppeteerClusterManager;
   private readonly dataProcessor: DataProcessorService;
 
+  private queueLock = new AsyncLock();
+  private sharedDataLock = new AsyncLock();
+
   private isCrawling: boolean = false;
   private maxCrawlCycles: number = config.crawler.maxCrawlCycles || 1000;
   private currentCrawlCycle: number = 0;
   private searchDelayMs: number = config.crawler.searchDelayMs || 1000;
-  private pageDelayMs: number = config.crawler.pageDelayMs || 500;
 
   constructor(
     storageService: StorageService,
@@ -48,7 +51,7 @@ export class CrawlerSchedulerService {
 
     this.Q1_communityDomains = new Queue<string>();
     this.Q1_communityDomainsSet = new Set<string>();
-    this.Q1_metadata = new Map<string, DomainMetadata>();
+    this.Q1_communityDomainsMetadata = new Map<string, DomainMetadata>();
     this.K1_keywords = new Set<string>();
     this.R1_domainKeywordMap = new Map<string, Set<string>>();
     this.R2_discoveredTargetDomains = new Set<string>();
@@ -83,7 +86,7 @@ export class CrawlerSchedulerService {
    * 1번의 루프마다
    * - communityDomains 큐에서 1개 진행
    * - searchResultLinks 큐 전부 진행
-   * - 새로운 키워드 조합을 적용하여 크롤링 재시작 여부 결정
+   * - communityDomains 큐가 비었을 경우 새로운 키워드 조합을 적용하여 크롤링 재시작 여부 결정
    *
    */
   public async startCrawling(): Promise<void> {
@@ -109,8 +112,8 @@ export class CrawlerSchedulerService {
         }
 
         if (this.Q1_communityDomains.isEmpty()) {
-          if (await this.checkAndPrepareForRestart()) {
-            this.isCrawling = true;
+          if (!(await this.checkAndPrepareForRestart())) {
+            this.isCrawling = false;
           }
         }
 
@@ -126,12 +129,13 @@ export class CrawlerSchedulerService {
   }
 
   /**
-   * 커뮤니티 도메인 큐에서 도메인을 가져와
+   * communityDomains 큐에서 도메인을 가져와
    * 키워드를 순차적으로 적용하여 검색 페이지 크롤링
-   * 각 키워드에 대한 검색 결과에서 추출된 링크들을 S1 큐에 추가
-   * 검색한 키워드를 R1에 저장
+   * 각 키워드에 대한 검색 결과에서 추출된 링크들을 searchResultData 큐에 추가
+   * 검색 완료한 도메인-키워드 조합 domainToKeywordMap 맵에 기록
    */
   private async processQ1_communityDomains(): Promise<void> {
+    if (this.Q1_communityDomains.isEmpty()) return;
     const domainToCrawl = this.Q1_communityDomains.dequeue();
     if (!domainToCrawl) return;
 
@@ -145,8 +149,8 @@ export class CrawlerSchedulerService {
       this.R1_domainKeywordMap.set(domainToCrawl, new Set<string>());
     }
 
-    if (!this.Q1_metadata.has(domainToCrawl)) {
-      this.Q1_metadata.set(domainToCrawl, {
+    if (!this.Q1_communityDomainsMetadata.has(domainToCrawl)) {
+      this.Q1_communityDomainsMetadata.set(domainToCrawl, {
         retryCount: 0,
         keywordCount: this.K1_keywords.size,
       });
@@ -172,7 +176,7 @@ export class CrawlerSchedulerService {
         if (Array.isArray(searchPageData)) {
           searchPageData.forEach(
             (data: { link: string; strategyHint: strategyHint }) => {
-              if (data.link && getBaseDomain(data.link) === domainToCrawl) {
+              if (data.link && normalizeDomain(data.link) === domainToCrawl) {
                 this.S1_searchResultData.enqueue(data);
               }
             }
@@ -186,112 +190,68 @@ export class CrawlerSchedulerService {
   }
 
   /**
-   * S1 큐에서 링크를 가져와 커뮤니티 사이트 크롤링
-   * 커뮤니티 사이트에서 추출된 데이터를 처리
-   *
+   * S1 검색 결과 링크들을 batch 단위로 끊어서 병렬처리
    */
   private async processS1_searchResultLinks(): Promise<void> {
+    const batchSize = config.puppeteer.maxConcurrency;
+
     while (!this.S1_searchResultData.isEmpty()) {
-      const dataToExplore = this.S1_searchResultData.dequeue();
-      if (!this.isCrawling) return;
-      if (!dataToExplore) continue;
+      // 배치 단위로 데이터 추출
+      const batch = await this.dequeueBatch(batchSize);
+      if (batch.length === 0) break;
 
-      const pageTask: CrawlTask = {
-        targetUrl: dataToExplore.link,
-        strategyHint: dataToExplore.strategyHint,
-      };
-      const exploredPageData: PageData | SearchData[] | null | undefined =
-        await this.puppeteerManager.queueTask(pageTask);
+      // 병렬 크롤링 실행
+      const crawlingPromises = batch.map(async (searchResultData) => {
+        try {
+          const pageTask: CrawlTask = {
+            targetUrl: searchResultData.link,
+            strategyHint: searchResultData.strategyHint,
+          };
+          const pageData = await this.puppeteerManager.queueTask(pageTask);
 
-      if (exploredPageData && !Array.isArray(exploredPageData)) {
-        await this.processExploredData(exploredPageData, dataToExplore.link);
-      } else {
-        continue;
-      }
-      if (this.pageDelayMs > 0) await this.delay(this.pageDelayMs);
-    }
-  }
-
-  /**
-   * S1에서 꺼낸 페이지 데이터를 처리
-   *
-   */
-  private async processExploredData(
-    pageData: PageData,
-    sourceUrl: string
-  ): Promise<void> {
-    const processedResult: ProcessedData =
-      await this.dataProcessor.processPageData(pageData, sourceUrl);
-
-    // 수집한 새 커뮤니티 도메인 큐 처리
-    processedResult.newCommunityDomains.forEach((domain: string) => {
-      const normDomain = normalizeDomain(domain.trim());
-      if (
-        normDomain &&
-        !this.R1_domainKeywordMap.has(normDomain) &&
-        !this.Q1_communityDomainsSet.has(normDomain)
-      ) {
-        this.Q1_communityDomainsSet.add(normDomain);
-        this.Q1_communityDomains.enqueue(normDomain);
-      }
-    });
-
-    // 수집한 새 타겟 사이트 처리
-    for (const site of processedResult.newTargetSites) {
-      const normDomain = site.normalizedDomain;
-      if (normDomain && !this.R2_discoveredTargetDomains.has(normDomain)) {
-        const siteDataFromProcessor = site;
-
-        const dataForDb: {
-          url: string;
-          normalizedDomain: string;
-          siteType: SiteType;
-          siteName?: string;
-          sourceUrl?: string;
-        } = {
-          url: siteDataFromProcessor.url,
-          normalizedDomain: siteDataFromProcessor.normalizedDomain,
-          siteType: siteDataFromProcessor.siteType,
-          siteName: siteDataFromProcessor.siteName ?? undefined,
-          sourceUrl: siteDataFromProcessor.sourceUrl ?? undefined,
-        };
-
-        void this.storageService.saveTargetSite(dataForDb);
-
-        if (dataForDb) {
-          this.R2_discoveredTargetDomains.add(normDomain);
-
-          if (dataForDb.siteName && dataForDb.siteName !== normDomain) {
-            this.K1_keywords.add(dataForDb.siteName.trim());
+          if (pageData && !Array.isArray(pageData)) {
+            return await this.processExploredDataLocal(
+              pageData,
+              searchResultData.link
+            );
           }
-          const domainPartForKeyword = normDomain.split(".")[0];
-          if (domainPartForKeyword) this.K1_keywords.add(domainPartForKeyword);
+        } catch (error) {
+          console.error(
+            `크롤링 실패: ${searchResultData.link}`,
+            error instanceof Error ? error.stack : String(error)
+          );
         }
+        return null;
+      });
+
+      // 모든 크롤링 완료 대기
+      const results = await Promise.allSettled(crawlingPromises);
+
+      // 성공한 결과만 수집
+      const successfulResults: ProcessedData[] = [];
+      results.forEach((result) => {
+        if (result.status === "fulfilled" && result.value !== null) {
+          successfulResults.push(result.value);
+        }
+      });
+
+      // 배치 결과를 공유 자료구조에 병합
+      if (successfulResults.length > 0) {
+        await this.mergeBatchResults(successfulResults);
       }
     }
-
-    // 수집한 새 키워드 처리
-    processedResult.newKeywords.forEach((keyword: string) => {
-      const trimmedKeyword = keyword.trim();
-      if (trimmedKeyword && trimmedKeyword.length > 1) {
-        this.K1_keywords.add(trimmedKeyword);
-      }
-    });
   }
 
   /**
-   *  체크 필요
    * 새로운 키워드 조합에 대해 재 크롤링 진행 여부 결정
-   *
-   * 수정필요사항 : 한 커뮤니티에 대한 재귀탐색 횟수 제한 추가 필요
-   *
+   * 새로운 키워드 조합이 있는 경우 communityDomains 큐에 추가 후 크롤링 재시작
    */
   private async checkAndPrepareForRestart(): Promise<boolean> {
     let shouldRestart = false;
     for (const domain of this.R1_domainKeywordMap.keys()) {
       if (!this.isCrawling) break;
 
-      const metadata = this.Q1_metadata.get(domain);
+      const metadata = this.Q1_communityDomainsMetadata.get(domain);
       if (!metadata) continue;
 
       if (
@@ -326,6 +286,15 @@ export class CrawlerSchedulerService {
     return shouldRestart;
   }
 
+  /**
+   * 크롤링 지연시간 제공
+   * @param ms 지연 시간
+   * @returns 지연 메서드
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   public stopCrawling(): void {
     this.isCrawling = false;
   }
@@ -334,7 +303,100 @@ export class CrawlerSchedulerService {
     return this.isCrawling;
   }
 
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  /**
+   * S1 큐에서 배치 크기만큼 데이터를 안전하게 추출
+   */
+  private async dequeueBatch(batchSize: number): Promise<SearchData[]> {
+    const release = await this.queueLock.acquire();
+    try {
+      const batch: SearchData[] = [];
+      while (!this.S1_searchResultData.isEmpty() && batch.length < batchSize) {
+        const data = this.S1_searchResultData.dequeue();
+        if (data) {
+          batch.push(data);
+        }
+      }
+      return batch;
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * 크롤링 결과 데이터를 로컬에서 처리 (공유 자료구조 접근 없음)
+   */
+  private async processExploredDataLocal(
+    pageData: PageData,
+    sourceUrl: string
+  ): Promise<ProcessedData> {
+    return await this.dataProcessor.processPageData(pageData, sourceUrl);
+  }
+
+  /**
+   * 배치 처리 결과를 공유 자료구조에 병합
+   */
+  private async mergeBatchResults(
+    batchResults: ProcessedData[]
+  ): Promise<void> {
+    const release = await this.sharedDataLock.acquire();
+    try {
+      for (const processedResult of batchResults) {
+        // 수집한 새 커뮤니티 도메인 큐 처리
+        processedResult.newCommunityDomains.forEach((domain: string) => {
+          const normDomain = normalizeDomain(domain.trim());
+          if (
+            normDomain &&
+            !this.R1_domainKeywordMap.has(normDomain) &&
+            !this.Q1_communityDomainsSet.has(normDomain)
+          ) {
+            this.Q1_communityDomainsSet.add(normDomain);
+            this.Q1_communityDomains.enqueue(normDomain);
+          }
+        });
+
+        // 수집한 새 타겟 사이트 처리
+        for (const site of processedResult.newTargetSites) {
+          const normDomain = site.normalizedDomain;
+          if (normDomain && !this.R2_discoveredTargetDomains.has(normDomain)) {
+            const dataForDb: {
+              url: string;
+              normalizedDomain: string;
+              siteType: SiteType;
+              siteName?: string;
+              sourceUrl?: string;
+            } = {
+              url: site.url,
+              normalizedDomain: site.normalizedDomain,
+              siteType: site.siteType,
+              siteName: site.siteName ?? undefined,
+              sourceUrl: site.sourceUrl ?? undefined,
+            };
+
+            void this.storageService.saveTargetSite(dataForDb);
+
+            if (dataForDb) {
+              this.R2_discoveredTargetDomains.add(normDomain);
+
+              if (dataForDb.siteName && dataForDb.siteName !== normDomain) {
+                this.K1_keywords.add(dataForDb.siteName.trim());
+              }
+              const domainPartForKeyword = normDomain.split(".")[0];
+              if (domainPartForKeyword)
+                this.K1_keywords.add(domainPartForKeyword);
+            }
+          }
+        }
+
+        // 수집한 새 키워드 처리
+        processedResult.newKeywords.forEach((keyword: string) => {
+          const trimmedKeyword = keyword.trim();
+          if (trimmedKeyword && trimmedKeyword.length > 1) {
+            this.K1_keywords.add(trimmedKeyword);
+          }
+        });
+      }
+    } finally {
+      release();
+    }
   }
 }

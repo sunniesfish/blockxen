@@ -3,12 +3,14 @@ import { TargetSiteEntity } from "../entities/target-site.entity";
 import { typeOrmConfig } from "@/config"; // AppDataSource 직접 사용 대신 config에서 가져오기
 import { SiteType } from "@/interfaces";
 
+/**
+ * 데이터베이스 저장소 서비스
+ */
 export class StorageService {
   private targetSiteRepository!: Repository<TargetSiteEntity>;
   private readonly dataSource: DataSource;
 
   constructor() {
-    // DataSource만 생성하고, repository는 initialize()에서 초기화
     this.dataSource = new DataSource(typeOrmConfig);
   }
 
@@ -36,8 +38,8 @@ export class StorageService {
   }
 
   /**
-   * 새로운 타겟 사이트를 데이터베이스에 저장합니다.
-   * 이미 존재하는 URL이라면 저장하지 않고 기존 데이터를 반환하거나 null을 반환할 수 있습니다.
+   * 새로운 타겟 사이트를 데이터베이스에 저장
+   * 이미 존재하는 URL이라면 저장하지 않고 기존 데이터를 반환하거나 null을 반환
    */
   public async saveTargetSite(data: {
     url: string;

@@ -2,6 +2,9 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
+/**
+ * 환경 변수 설정
+ */
 export const config = {
   database: {
     host: process.env.DB_HOST || "localhost",
@@ -34,13 +37,15 @@ export const config = {
     maxCrawlCycles: parseInt(process.env.CRAWLER_MAX_CYCLES || "1000", 10),
     searchDelayMs: parseInt(process.env.CRAWLER_SEARCH_DELAY_MS || "1000", 10),
     pageDelayMs: parseInt(process.env.CRAWLER_PAGE_DELAY_MS || "500", 10),
+    illegalFreeServerIndicator:
+      process.env.ILLEGAL_FREE_SERVER_INDICATOR || "프리섭",
+    gamblingIndicator: process.env.GAMBLING_INDICATOR || "카지노",
   },
   strategy: {
     searchKeywords: (
       process.env.STRATEGY_SEARCH_KEYWORDS || "프리섭,첫충,홍보채널"
     ).split(","),
   },
-  isDevelopment: process.env.NODE_ENV === "development",
 };
 
 export * from "./typeorm.config";

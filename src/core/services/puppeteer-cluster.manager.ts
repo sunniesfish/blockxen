@@ -29,7 +29,7 @@ export class PuppeteerClusterManager {
     }
 
     this.cluster = await Cluster.launch({
-      concurrency: Cluster.CONCURRENCY_CONTEXT, // 또는 CONCURRENCY_BROWSER, CONCURRENCY_PAGE
+      concurrency: Cluster.CONCURRENCY_CONTEXT,
       maxConcurrency: config.puppeteer.maxConcurrency,
       puppeteerOptions: {
         headless: config.puppeteer.headless,
@@ -44,7 +44,6 @@ export class PuppeteerClusterManager {
         ],
         timeout: config.puppeteer.timeoutMs,
       },
-      monitor: config.isDevelopment,
       workerCreationDelay: 100,
       retryLimit: config.puppeteer.retryLimit,
       retryDelay: config.puppeteer.retryDelay,
